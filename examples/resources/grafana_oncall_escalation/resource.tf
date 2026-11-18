@@ -43,3 +43,15 @@ resource "grafana_oncall_escalation" "example_notify_next_on_call_step" {
   notify_on_call_from_schedule = grafana_oncall_schedule.example_schedule.id
   position                     = 1
 }
+
+data "grafana_oncall_team" "sre" {
+  name = "sre"
+}
+
+// Pause until team hours step: escalation waits until the team's next working period
+resource "grafana_oncall_escalation" "example_pause_until_team_hours_step" {
+  escalation_chain_id    = grafana_oncall_escalation_chain.default.id
+  type                   = "pause_until_team_hours"
+  notify_to_team_members = data.grafana_oncall_team.sre.id
+  position               = 2
+}

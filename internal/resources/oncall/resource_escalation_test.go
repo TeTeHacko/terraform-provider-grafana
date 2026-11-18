@@ -55,6 +55,14 @@ func TestAccOnCallEscalation_basic(t *testing.T) {
 					resource.TestCheckResourceAttr("grafana_oncall_escalation.test-acc-escalation-policy-notify-next", "type", "notify_next_on_call_from_schedule"),
 					resource.TestCheckResourceAttr("grafana_oncall_escalation.test-acc-escalation-policy-notify-next", "position", "5"),
 					resource.TestCheckResourceAttrSet("grafana_oncall_escalation.test-acc-escalation-policy-notify-next", "notify_on_call_from_schedule"),
+
+					testAccCheckOnCallEscalationResourceExists("grafana_oncall_escalation.test-acc-escalation-policy-pause-team-hours"),
+					resource.TestCheckResourceAttr("grafana_oncall_escalation.test-acc-escalation-policy-pause-team-hours", "type", "pause_until_team_hours"),
+					resource.TestCheckResourceAttr("grafana_oncall_escalation.test-acc-escalation-policy-pause-team-hours", "position", "6"),
+					resource.TestCheckResourceAttrPair(
+						"grafana_oncall_escalation.test-acc-escalation-policy-pause-team-hours", "notify_to_team_members",
+						"data.grafana_oncall_team.test-acc-team", "id",
+					),
 				),
 			},
 			{
@@ -80,6 +88,11 @@ func TestAccOnCallEscalation_basic(t *testing.T) {
 			{
 				ImportState:       true,
 				ResourceName:      "grafana_oncall_escalation.test-acc-escalation-policy-notify-next",
+				ImportStateVerify: true,
+			},
+			{
+				ImportState:       true,
+				ResourceName:      "grafana_oncall_escalation.test-acc-escalation-policy-pause-team-hours",
 				ImportStateVerify: true,
 			},
 		},
@@ -168,7 +181,76 @@ resource "grafana_oncall_escalation" "test-acc-escalation-policy-notify-next" {
 	notify_on_call_from_schedule = grafana_oncall_schedule.test-acc-schedule.id
 	position = 5
 }
+
+resource "grafana_oncall_escalation" "test-acc-escalation-policy-pause-team-hours" {
+	escalation_chain_id = grafana_oncall_escalation_chain.test-acc-escalation-chain.id
+	type = "pause_until_team_hours"
+	notify_to_team_members = data.grafana_oncall_team.test-acc-team.id
+	position = 6
+}
 `, riName, riName, riName, reType, reDuration, riName)
+}
+
+func TestAccOnCallEscalation_pauseUntilTeamHours_update(t *testing.T) {
+	testutils.CheckCloudInstanceTestsEnabled(t)
+
+	riName := fmt.Sprintf("test-acc-%s", acctest.RandString(8))
+	resourceName := "grafana_oncall_escalation.test-acc-escalation-gate"
+
+	resource.ParallelTest(t, resource.TestCase{
+		ProtoV5ProviderFactories: testutils.ProtoV5ProviderFactories,
+		CheckDestroy:             testAccCheckOnCallEscalationResourceDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccOnCallEscalationGateConfig(riName, `
+	type = "notify_if_time_from_to"
+	notify_if_time_from = "08:00:00Z"
+	notify_if_time_to = "16:00:00Z"`),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckOnCallEscalationResourceExists(resourceName),
+					resource.TestCheckResourceAttr(resourceName, "type", "notify_if_time_from_to"),
+				),
+			},
+			// The type changes in place; without a team the update must fail.
+			{
+				Config: testAccOnCallEscalationGateConfig(riName, `
+	type = "pause_until_team_hours"`),
+				ExpectError: regexp.MustCompile(`notify_to_team_members is required with type: pause_until_team_hours`),
+			},
+			{
+				Config: testAccOnCallEscalationGateConfig(riName, `
+	type = "pause_until_team_hours"
+	notify_to_team_members = data.grafana_oncall_team.test-acc-team.id`),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckOnCallEscalationResourceExists(resourceName),
+					resource.TestCheckResourceAttr(resourceName, "type", "pause_until_team_hours"),
+					resource.TestCheckResourceAttrPair(resourceName, "notify_to_team_members", "data.grafana_oncall_team.test-acc-team", "id"),
+				),
+			},
+		},
+	})
+}
+
+func testAccOnCallEscalationGateConfig(riName string, stepAttrs string) string {
+	return fmt.Sprintf(`
+resource "grafana_oncall_escalation_chain" "test-acc-escalation-chain" {
+	name = "acc-test-%s"
+}
+
+resource "grafana_team" "test-acc-team" {
+	name = "acc-escalation-test-%s"
+}
+
+data "grafana_oncall_team" "test-acc-team" {
+	name = grafana_team.test-acc-team.name
+}
+
+resource "grafana_oncall_escalation" "test-acc-escalation-gate" {
+	escalation_chain_id = grafana_oncall_escalation_chain.test-acc-escalation-chain.id
+	position = 0
+%s
+}
+`, riName, riName, stepAttrs)
 }
 
 func TestAccOnCallEscalation_notifyIfNumAlertsInWindow_wrongType(t *testing.T) {

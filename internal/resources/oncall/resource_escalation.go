@@ -28,6 +28,13 @@ var escalationOptions = []string{
 	"repeat_escalation",
 	"notify_team_members",
 	"declare_incident",
+	"pause_until_team_hours",
+}
+
+// stepTypeUsesTeamToNotify reports whether the step type takes a team in the
+// API's team_to_notify field (exposed here as notify_to_team_members).
+func stepTypeUsesTeamToNotify(stepType any) bool {
+	return stepType == "notify_team_members" || stepType == "pause_until_team_hours"
 }
 
 var escalationOptionsVerbal = strings.Join(escalationOptions, ", ")
@@ -155,7 +162,7 @@ func resourceEscalation() *common.Resource {
 					"notify_if_time_from",
 					"notify_if_time_to",
 				},
-				Description: "The ID of a Team for a notify_team_members type step.",
+				Description: "The ID of a Team for a notify_team_members type step, or the Team whose team hours a pause_until_team_hours type step waits for (required for that type).",
 			},
 			"action_to_trigger": {
 				Type:     schema.TypeString,
@@ -318,11 +325,13 @@ func resourceEscalationCreate(ctx context.Context, d *schema.ResourceData, clien
 
 	teamToNotifyData, teamToNotifyDataOk := d.GetOk("notify_to_team_members")
 	if teamToNotifyDataOk {
-		if typeData == "notify_team_members" {
+		if stepTypeUsesTeamToNotify(typeData) {
 			createOptions.TeamToNotify = teamToNotifyData.(string)
 		} else {
 			return diag.Errorf("notify_to_team_members can not be set with type: %s", typeData)
 		}
+	} else if typeData == "pause_until_team_hours" {
+		return diag.Errorf("notify_to_team_members is required with type: %s", typeData)
 	}
 
 	severityData, severityDataOk := d.GetOk("severity")
@@ -506,9 +515,11 @@ func resourceEscalationUpdate(ctx context.Context, d *schema.ResourceData, clien
 
 	teamToNotifyData, teamToNotifyDataOk := d.GetOk("notify_to_team_members")
 	if teamToNotifyDataOk {
-		if typeData == "notify_team_members" {
+		if stepTypeUsesTeamToNotify(typeData) {
 			updateOptions.TeamToNotify = teamToNotifyData.(string)
 		}
+	} else if typeData == "pause_until_team_hours" {
+		return diag.Errorf("notify_to_team_members is required with type: %s", typeData)
 	}
 
 	severityData, severityDataOk := d.GetOk("severity")
